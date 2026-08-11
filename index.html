@@ -12,6 +12,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   :root{
     --ink:#0E1F2B;
@@ -72,6 +73,145 @@ const STORAGE_KEYS = {
   settings: 'vss_settings',
   seeded: 'vss_seeded_v1'
 };
+
+/* ============================== SUPABASE CONFIG ============================== */
+const SUPABASE_URL = 'https://mrrbmaeuvleikyzczzkr.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_4sGVEj-rWlO7kE-3fIqFzw_xSM4oOUQ';
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ---- Supabase helpers ---- */
+async function sbGetSession(){ const { data } = await supabase.auth.getSession(); return data.session; }
+async function sbSignIn(email, password){ return supabase.auth.signInWithPassword({ email, password }); }
+async function sbSignOut(){ return supabase.auth.signOut(); }
+async function sbSignUp(email, password){ return supabase.auth.signUp({ email, password }); }
+
+async function sbLoadCompanySettings(){
+  const { data } = await supabase.from('company_settings').select('*').limit(1).single();
+  return data;
+}
+async function sbSaveCompanySettings(settings){
+  const { data: existing } = await supabase.from('company_settings').select('id').limit(1).single();
+  if(existing && existing.id){
+    return supabase.from('company_settings').update(settings).eq('id', existing.id);
+  } else {
+    return supabase.from('company_settings').insert(settings);
+  }
+}
+
+async function sbLoadClients(){
+  const { data, error } = await supabase.from('customers').select('*').order('company_name');
+  if(error){ console.error('Load customers:', error); return []; }
+  return (data||[]).map(sbClientToLocal);
+}
+async function sbSaveClient(c){
+  const row = localClientToSb(c);
+  if(c._sbId){
+    const { error } = await supabase.from('customers').update(row).eq('id', c._sbId);
+    return error;
+  } else {
+    const { error } = await supabase.from('customers').insert(row);
+    return error;
+  }
+}
+async function sbDeleteClient(sbId){
+  const { error } = await supabase.from('customers').delete().eq('id', sbId);
+  return error;
+}
+async function sbFindOrCreateClient(c){
+  // Find by company name (case insensitive)
+  const { data: existing } = await supabase.from('customers').select('*').ilike('company_name', c.company.trim()).limit(1);
+  if(existing && existing.length>0) return { data: existing[0] };
+  const row = localClientToSb(c);
+  const { data, error } = await supabase.from('customers').insert(row).select().single();
+  return { data, error };
+}
+
+function sbClientToLocal(row){
+  return { id: row.id, _sbId: row.id, company: row.company_name||'', contact: row.contact_person||'', email: row.email||'', phone: row.phone||'', address: row.address||'', city: row.city||'', country: row.country||'United Kingdom', website:'', reference:'' };
+}
+function localClientToSb(c){
+  return { company_name: c.company||'', contact_person: c.contact||'', email: c.email||'', phone: c.phone||'', address: c.address||'', city: c.city||'', country: c.country||'United Kingdom' };
+}
+
+async function sbNextQuotationNumber(prefix){
+  const year = new Date().getFullYear();
+  const { data } = await supabase.from('quotations').select('quotation_number').ilike('quotation_number', `${prefix}-${year}-%`).order('quotation_number', { ascending: false }).limit(1);
+  let seq = 1;
+  if(data && data.length > 0){
+    const last = data[0].quotation_number;
+    const parts = last.split('-');
+    seq = (parseInt(parts[parts.length-1], 10) || 0) + 1;
+  }
+  return `${prefix}-${year}-${String(seq).padStart(4,'0')}`;
+}
+
+async function sbSaveQuotation(q, settings){
+  const totals = calcTotals(q);
+  // Find or create customer
+  let customerId = null;
+  if(q.client.company){
+    const { data: cust, error: custErr } = await sbFindOrCreateClient(q.client);
+    if(custErr){ throw new Error('Customer save failed: ' + custErr.message); }
+    customerId = cust ? cust.id : null;
+  }
+  const qRow = {
+    quotation_number: q.number,
+    customer_id: customerId,
+    quotation_date: q.date || null,
+    valid_until: q.validUntil || null,
+    status: q.status || 'Draft',
+    currency: q.currency || 'GBP',
+    subtotal: totals.subtotal,
+    vat_percentage: Number(q.taxRate)||0,
+    vat_amount: totals.tax,
+    total_amount: totals.grandTotal,
+    notes: q.commercial ? q.commercial.notes||'' : '',
+    terms_and_conditions: q.commercial ? q.commercial.paymentTerms||'' : '',
+    payload: JSON.stringify(q)
+  };
+  let quotationId = q._sbId || null;
+  if(quotationId){
+    const { error } = await supabase.from('quotations').update(qRow).eq('id', quotationId);
+    if(error) throw new Error('Quotation update failed: ' + error.message);
+  } else {
+    const { data, error } = await supabase.from('quotations').insert(qRow).select('id').single();
+    if(error) throw new Error('Quotation insert failed: ' + error.message);
+    quotationId = data.id;
+  }
+  // Delete existing items then re-insert
+  await supabase.from('quotation_items').delete().eq('quotation_id', quotationId);
+  const items = (q.lineItems||[]).map((it, idx)=>({
+    quotation_id: quotationId,
+    description: it.service + (it.description ? '\n' + it.description : ''),
+    quantity: Number(it.qty)||1,
+    unit_price: Number(it.rate)||0,
+    total_price: lineItemAmount(it).total,
+    sort_order: idx
+  }));
+  if(items.length>0){
+    const { error: iErr } = await supabase.from('quotation_items').insert(items);
+    if(iErr) console.error('Items insert error:', iErr);
+  }
+  return quotationId;
+}
+
+async function sbLoadQuotations(){
+  const { data, error } = await supabase.from('quotations').select('id, quotation_number, status, quotation_date, valid_until, total_amount, currency, payload, customers(company_name)').order('created_at', { ascending: false });
+  if(error){ console.error('Load quotations:', error); return []; }
+  return (data||[]).map(row=>{
+    let q = {};
+    if(row.payload){ try{ q = JSON.parse(row.payload); }catch(e){} }
+    q._sbId = row.id;
+    q.number = row.quotation_number || q.number;
+    q.status = row.status || q.status;
+    return q;
+  });
+}
+
+async function sbDeleteQuotation(sbId){
+  const { error } = await supabase.from('quotations').delete().eq('id', sbId);
+  return error;
+}
 
 const CURRENCIES = {
   GBP: { symbol: '£', label: 'GBP — British Pound' },
@@ -444,32 +584,56 @@ function Select({ children, ...props }){ return <select {...props} className={in
 
 /* ============================== APP ROOT ============================== */
 
-function App(){
+function App({ user }){
   const [settings, setSettingsState] = useState(()=>loadLS(STORAGE_KEYS.settings, DEFAULT_SETTINGS));
-  const [quotations, setQuotationsState] = useState(()=>loadLS(STORAGE_KEYS.quotations, []));
-  const [clients, setClientsState] = useState(()=>loadLS(STORAGE_KEYS.clients, []));
+  const [quotations, setQuotationsState] = useState([]);
+  const [clients, setClientsState] = useState([]);
   const [services, setServicesState] = useState(()=>loadLS(STORAGE_KEYS.services, DEFAULT_SERVICES));
   const [templates] = useState(()=>loadLS(STORAGE_KEYS.templates, DEFAULT_TEMPLATES));
   const [view, setView] = useState('dashboard');
   const [activeQuotation, setActiveQuotation] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [dbLoading, setDbLoading] = useState(true);
 
-  // seed demo data once
+  // Load from Supabase on mount
   useEffect(()=>{
-    if(!loadLS(STORAGE_KEYS.seeded, false)){
-      const seed = seedDemoData(DEFAULT_SETTINGS);
-      setQuotationsState(seed.quotations);
-      setClientsState(seed.clients);
-      setSettingsState({ ...DEFAULT_SETTINGS, nextSeq: DEFAULT_SETTINGS.nextSeq + 3 });
-      saveLS(STORAGE_KEYS.seeded, true);
+    async function loadAll(){
+      setDbLoading(true);
+      try {
+        const [sbQuotations, sbClients, sbSettings] = await Promise.all([
+          sbLoadQuotations(), sbLoadClients(), sbLoadCompanySettings()
+        ]);
+        if(sbQuotations.length > 0) setQuotationsState(sbQuotations);
+        else {
+          // Fall back to localStorage on first load
+          const local = loadLS(STORAGE_KEYS.quotations, []);
+          setQuotationsState(local);
+        }
+        if(sbClients.length > 0) setClientsState(sbClients);
+        else setClientsState(loadLS(STORAGE_KEYS.clients, []));
+        if(sbSettings){
+          const merged = {
+            ...DEFAULT_SETTINGS,
+            companyName: sbSettings.company_name || DEFAULT_SETTINGS.companyName,
+            address: sbSettings.address || DEFAULT_SETTINGS.address,
+            phone: sbSettings.phone || DEFAULT_SETTINGS.phone,
+            email: sbSettings.email || DEFAULT_SETTINGS.email,
+            website: sbSettings.website || DEFAULT_SETTINGS.website,
+            vatNumber: sbSettings.vat_number || DEFAULT_SETTINGS.vatNumber,
+            defaultCurrency: sbSettings.default_currency || DEFAULT_SETTINGS.defaultCurrency,
+            defaultValidityDays: sbSettings.default_validity_days || DEFAULT_SETTINGS.defaultValidityDays,
+            footerText: sbSettings.footer_text || DEFAULT_SETTINGS.footerText,
+          };
+          setSettingsState(merged);
+        }
+      } catch(e){ console.error('DB load error:', e); }
+      setDbLoading(false);
     }
-    // eslint-disable-next-line
+    loadAll();
   }, []);
 
   useEffect(()=>saveLS(STORAGE_KEYS.settings, settings), [settings]);
-  useEffect(()=>saveLS(STORAGE_KEYS.quotations, quotations), [quotations]);
-  useEffect(()=>saveLS(STORAGE_KEYS.clients, clients), [clients]);
   useEffect(()=>saveLS(STORAGE_KEYS.services, services), [services]);
   useEffect(()=>saveLS(STORAGE_KEYS.templates, templates), [templates]);
 
@@ -488,9 +652,17 @@ function App(){
 
   const setSettings = (s) => setSettingsState(s);
 
-  const newQuotation = () => {
-    const q = blankQuotation(settings);
-    setSettingsState(prev=>({ ...prev, nextSeq: prev.nextSeq + 1 }));
+  const newQuotation = async () => {
+    // Get next quotation number from DB
+    let num;
+    try {
+      num = await sbNextQuotationNumber(settings.prefix || 'VSS-Q');
+    } catch(e) {
+      num = nextQuotationNumber(settings);
+      setSettingsState(prev=>({ ...prev, nextSeq: prev.nextSeq + 1 }));
+    }
+    const q = blankQuotation({ ...settings, _overrideNumber: num });
+    q.number = num;
     setActiveQuotation(q);
     setView('wizard');
   };
@@ -519,43 +691,64 @@ function App(){
     setView('wizard');
   };
 
-  const saveDraft = (q) => {
+  const saveDraft = async (q) => {
+    // Update local state immediately
     setQuotationsState(prev=>{
       const exists = prev.some(x=>x.id===q.id);
-      const withClientSave = q;
-      return exists ? prev.map(x=>x.id===q.id?withClientSave:x) : [...prev, withClientSave];
+      return exists ? prev.map(x=>x.id===q.id?q:x) : [...prev, q];
     });
-    // auto-add client to database if new
-    if(q.client.company){
-      setClientsState(prev=>{
-        const found = prev.some(c=>c.company.toLowerCase()===q.client.company.toLowerCase());
-        if(found) return prev;
-        return [...prev, { id: uid('cli'), company:q.client.company, contact:q.client.contact, email:q.client.email, phone:q.client.phone, country:q.client.country, address:q.client.address, website:q.client.website }];
-      });
+    // Sync to Supabase
+    try {
+      const sbId = await sbSaveQuotation(q, settings);
+      if(!q._sbId && sbId){
+        setQuotationsState(prev=>prev.map(x=>x.id===q.id?{...x,_sbId:sbId}:x));
+        if(activeQuotation && activeQuotation.id === q.id){
+          setActiveQuotation(prev=>prev?{...prev, _sbId:sbId}:prev);
+        }
+      }
+      // auto-add client to local db
+      if(q.client.company){
+        setClientsState(prev=>{
+          const found = prev.some(c=>c.company.toLowerCase()===q.client.company.toLowerCase());
+          if(found) return prev;
+          return [...prev, { id: uid('cli'), company:q.client.company, contact:q.client.contact, email:q.client.email, phone:q.client.phone, country:q.client.country, address:q.client.address, website:q.client.website }];
+        });
+      }
+    } catch(e){
+      console.error('Supabase save error:', e);
+      notify('Saved locally. DB sync failed: ' + e.message, 'error');
     }
   };
 
-  const duplicateQuotation = (id) => {
+  const duplicateQuotation = async (id) => {
     const orig = quotations.find(x=>x.id===id);
     if(!orig) return;
     const copy = JSON.parse(JSON.stringify(orig));
     copy.id = uid('quo');
-    copy.number = nextQuotationNumber(settings);
+    copy._sbId = null;
+    let num;
+    try { num = await sbNextQuotationNumber(settings.prefix || 'VSS-Q'); } catch(e){ num = nextQuotationNumber(settings); }
+    copy.number = num;
     copy.revision = 0;
     copy.status = 'Draft';
     copy.isDemo = false;
     copy.date = todayISO();
     copy.validUntil = addDays(copy.date, copy.commercial.validityDays);
     copy.createdAt = Date.now(); copy.updatedAt = Date.now();
-    setSettingsState(prev=>({ ...prev, nextSeq: prev.nextSeq + 1 }));
     setQuotationsState(prev=>[...prev, copy]);
+    // Save to DB
+    try { await sbSaveQuotation(copy, settings); } catch(e){ console.error(e); }
     notify(`Duplicated as ${copy.number}.`);
   };
 
   const deleteQuotation = (id) => setConfirmDeleteId(id);
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
+    const q = quotations.find(x=>x.id===confirmDeleteId);
     setQuotationsState(prev=>prev.filter(x=>x.id!==confirmDeleteId));
     setConfirmDeleteId(null);
+    if(q && q._sbId){
+      try { await sbDeleteQuotation(q._sbId); } catch(e){ console.error(e); }
+    }
     notify('Quotation deleted.');
   };
 
@@ -569,15 +762,31 @@ function App(){
     }
   };
 
+  const handleLogout = async () => {
+    await sbSignOut();
+    window.location.reload();
+  };
+
   const finishWizard = () => { setView('dashboard'); setActiveQuotation(null); };
   const cancelWizard = () => {
     if(activeQuotation) saveDraft(activeQuotation);
     setView('dashboard'); setActiveQuotation(null);
   };
 
+  if(dbLoading){
+    return (
+      <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'var(--paper)'}}>
+        <div style={{textAlign:'center'}}>
+          <div className="font-display font-bold text-xl mb-2">VSS Power</div>
+          <div className="text-sm text-[var(--muted)]">Loading data…</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen">
-      <Sidebar view={view} setView={(v)=>{ if(view==='wizard' && activeQuotation) saveDraft(activeQuotation); setView(v); }} onNew={newQuotation} />
+      <Sidebar view={view} setView={(v)=>{ if(view==='wizard' && activeQuotation) saveDraft(activeQuotation); setView(v); }} onNew={newQuotation} onLogout={handleLogout} user={user} />
       <div className="flex-1 min-w-0">
         {view==='dashboard' && (
           <Dashboard quotations={quotations} setView={setView} openQuotation={openQuotation}
@@ -604,59 +813,82 @@ function App(){
   );
 }
 
-/* ============================== ACCESS GATE ============================== */
-/* Single-user screen lock. NOTE: this is a client-side deterrent only, not
-   real security — anyone with browser DevTools can eventually recover the
-   credential check, since there is no server to validate against. */
-const _AUTH_B64 = 'QWRtaW46MzAwOTE5OTJANjIwNDA3MDgxMQ==';
-const AUTH_SESSION_KEY = 'vss_auth_ok';
-
-function checkCredentials(user, pass){
-  try{
-    const decoded = atob(_AUTH_B64);
-    const sep = decoded.indexOf(':');
-    const okUser = decoded.slice(0, sep);
-    const okPass = decoded.slice(sep+1);
-    return user === okUser && pass === okPass;
-  }catch(e){ return false; }
-}
+/* ============================== ACCESS GATE — SUPABASE AUTH ============================== */
 
 function LoginGate(){
-  const [authed, setAuthed] = useState(()=>{
-    try{ return sessionStorage.getItem(AUTH_SESSION_KEY) === '1'; }catch(e){ return false; }
-  });
-  const [user, setUser] = useState('');
-  const [pass, setPass] = useState('');
+  const [session, setSession] = useState(null);
+  const [checking, setChecking] = useState(true);
+  const [mode, setMode] = useState('login'); // 'login' | 'signup'
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [signupDone, setSignupDone] = useState(false);
 
-  const handleSubmit = (e) => {
+  useEffect(()=>{
+    sbGetSession().then(s=>{ setSession(s); setChecking(false); });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, s)=>{ setSession(s); setChecking(false); });
+    return ()=>listener.subscription.unsubscribe();
+  }, []);
+
+  if(checking){
+    return (
+      <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'var(--paper)'}}>
+        <div className="text-sm text-[var(--muted)]">Checking session…</div>
+      </div>
+    );
+  }
+
+  if(session) return <App user={session.user} />;
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if(checkCredentials(user, pass)){
-      setError('');
-      try{ sessionStorage.setItem(AUTH_SESSION_KEY, '1'); }catch(e){}
-      setAuthed(true);
-    }else{
-      setError('Incorrect username or password.');
+    setError(''); setLoading(true);
+    if(mode === 'login'){
+      const { error: err } = await sbSignIn(email, password);
+      if(err){ setError(err.message); setLoading(false); return; }
+    } else {
+      const { error: err } = await sbSignUp(email, password);
+      if(err){ setError(err.message); setLoading(false); return; }
+      setSignupDone(true); setLoading(false); return;
     }
+    setLoading(false);
   };
 
-  if(authed) return <App />;
+  if(signupDone){
+    return (
+      <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'var(--paper)'}}>
+        <div style={{width:340,background:'var(--panel)',border:'1px solid var(--line)',borderRadius:10,padding:28,textAlign:'center'}}>
+          <div className="font-display font-bold text-lg mb-2" style={{color:'var(--success)'}}>Account Created!</div>
+          <p className="text-sm text-[var(--muted)] mb-4">Check your email for a confirmation link, then sign in below.</p>
+          <button onClick={()=>{ setMode('login'); setSignupDone(false); }} className="font-semibold text-sm px-4 py-2 rounded" style={{background:'var(--steel)',color:'white'}}>Back to Sign In</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={{minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:'var(--paper)'}}>
-      <form onSubmit={handleSubmit} style={{width:340, background:'var(--panel)', border:'1px solid var(--line)', borderRadius:10, padding:28}}>
-        <div className="font-display font-bold text-lg" style={{marginBottom:4}}>VSS Power</div>
-        <div className="text-sm" style={{color:'var(--muted)', marginBottom:20}}>Sign in to continue</div>
-        <label className="text-xs font-semibold uppercase tracking-wide" style={{color:'var(--muted)'}}>Username</label>
-        <input autoFocus value={user} onChange={e=>setUser(e.target.value)}
-          className={inputCls} style={{marginTop:4, marginBottom:14}} />
-        <label className="text-xs font-semibold uppercase tracking-wide" style={{color:'var(--muted)'}}>Password</label>
-        <input type="password" value={pass} onChange={e=>setPass(e.target.value)}
-          className={inputCls} style={{marginTop:4, marginBottom:14}} />
-        {error && <div className="text-sm" style={{color:'var(--danger)', marginBottom:12}}>{error}</div>}
-        <button type="submit" className="font-semibold" style={{width:'100%', padding:'10px 0', background:'var(--steel)', color:'white', borderRadius:6}}>
-          Sign In
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'var(--paper)'}}>
+      <form onSubmit={handleSubmit} style={{width:360,background:'var(--panel)',border:'1px solid var(--line)',borderRadius:10,padding:32}}>
+        <div className="font-display font-bold text-xl mb-1">VSS Power</div>
+        <div className="text-sm mb-6" style={{color:'var(--muted)'}}>{mode==='login' ? 'Sign in to continue' : 'Create a new account'}</div>
+        <label className="block text-xs font-semibold uppercase tracking-wide mb-1" style={{color:'var(--muted)'}}>Email</label>
+        <input autoFocus type="email" value={email} onChange={e=>setEmail(e.target.value)}
+          className={inputCls} style={{marginBottom:14}} required />
+        <label className="block text-xs font-semibold uppercase tracking-wide mb-1" style={{color:'var(--muted)'}}>Password</label>
+        <input type="password" value={password} onChange={e=>setPassword(e.target.value)}
+          className={inputCls} style={{marginBottom:14}} required minLength="6" />
+        {error && <div className="text-sm mb-3" style={{color:'var(--danger)'}}>{error}</div>}
+        <button type="submit" disabled={loading} className="w-full font-semibold py-2.5 rounded mb-4" style={{background:'var(--steel)',color:'white',opacity:loading?0.7:1}}>
+          {loading ? (mode==='login'?'Signing in…':'Creating account…') : (mode==='login'?'Sign In':'Create Account')}
         </button>
+        <div className="text-center text-sm" style={{color:'var(--muted)'}}>
+          {mode==='login' ? (
+            <>Don't have an account? <button type="button" onClick={()=>{setMode('signup');setError('');}} className="font-semibold" style={{color:'var(--steel)'}}>Sign Up</button></>
+          ) : (
+            <>Already have an account? <button type="button" onClick={()=>{setMode('login');setError('');}} className="font-semibold" style={{color:'var(--steel)'}}>Sign In</button></>
+          )}
+        </div>
       </form>
     </div>
   );
@@ -1663,8 +1895,10 @@ function ClientsPage({ clients, setClients, quotations, notify }){
 
   const openNew = () => { setEditing({ id: uid('cli'), company:'', contact:'', email:'', phone:'', country:'United Kingdom', address:'', website:'' }); setModalOpen(true); };
   const openEdit = (c) => { setEditing({ ...c }); setModalOpen(true); };
-  const save = () => {
+  const save = async () => {
     if(!editing.company.trim()){ notify('Company name is required.', 'error'); return; }
+    const err = await sbSaveClient(editing);
+    if(err){ notify('DB save failed: ' + err.message, 'error'); return; }
     setClients(prev=>{
       const exists = prev.some(c=>c.id===editing.id);
       return exists ? prev.map(c=>c.id===editing.id?editing:c) : [...prev, editing];
@@ -1672,7 +1906,11 @@ function ClientsPage({ clients, setClients, quotations, notify }){
     setModalOpen(false);
     notify('Client saved.');
   };
-  const doDelete = (id) => { setClients(prev=>prev.filter(c=>c.id!==id)); setConfirmDelete(null); notify('Client removed.'); };
+  const doDelete = async (id) => {
+    const c = clients.find(x=>x.id===id);
+    if(c && c._sbId){ await sbDeleteClient(c._sbId); }
+    setClients(prev=>prev.filter(c=>c.id!==id)); setConfirmDelete(null); notify('Client removed.');
+  };
 
   return (
     <div className="p-8 space-y-6">
@@ -1849,7 +2087,23 @@ function SettingsPage({ settings, setSettings, notify }){
   const [form, setForm] = useState(settings);
   useEffect(()=>setForm(settings), [settings]);
   const set = (field, val) => setForm({...form, [field]: val});
-  const save = () => { setSettings(form); notify('Settings saved.'); };
+  const save = async () => {
+    setSettings(form);
+    try {
+      await sbSaveCompanySettings({
+        company_name: form.companyName,
+        address: form.address,
+        phone: form.phone,
+        email: form.email,
+        website: form.website,
+        vat_number: form.vatNumber,
+        default_currency: form.defaultCurrency,
+        default_validity_days: form.defaultValidityDays,
+        footer_text: form.footerText
+      });
+    } catch(e){ console.error('Settings DB sync failed:', e); }
+    notify('Settings saved.');
+  };
 
   const listField = (key, label) => (
     <ListEditor
@@ -1929,7 +2183,7 @@ const NAV_ITEMS = [
   { key:'settings', label:'Settings', icon:'✦' }
 ];
 
-function Sidebar({ view, setView, onNew }){
+function Sidebar({ view, setView, onNew, onLogout, user }){
   return (
     <div className="w-60 shrink-0 flex flex-col no-print" style={{ background:'var(--ink)' }}>
       <div className="flex items-stretch">
@@ -1955,6 +2209,14 @@ function Sidebar({ view, setView, onNew }){
           </button>
         ))}
       </nav>
+      {user && (
+        <div className="px-4 pb-3 pt-2 border-t border-white/10">
+          <div className="text-[11px] text-white/40 truncate mb-2">{user.email}</div>
+          <button onClick={onLogout} className="w-full py-2 rounded text-sm font-medium" style={{background:'rgba(255,255,255,0.08)',color:'rgba(255,255,255,0.7)'}}>
+            Sign Out
+          </button>
+        </div>
+      )}
       <div className="px-5 py-4 text-[11px] text-white/35 font-mono border-t border-white/10">
         QUOTATION MANAGEMENT
       </div>
