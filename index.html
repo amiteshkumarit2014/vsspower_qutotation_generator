@@ -86,7 +86,12 @@ if(!SUPABASE_URL || !/^https:\/\/.+\.supabase\.co$/i.test(SUPABASE_URL)){
 if(!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY.startsWith('sb_publishable_')){
   throw new Error('Invalid SUPABASE_ANON_KEY. Use the Supabase anon public JWT key from Project Settings > API.');
 }
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+/*const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);*/
+window.APP_SUPABASE = window.APP_SUPABASE || {};
+window.APP_SUPABASE.client =
+  window.APP_SUPABASE.client ||
+  window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabase = window.APP_SUPABASE.client;
 
 /* ---- Supabase helpers ---- */
 async function sbGetSession(){ const { data } = await supabase.auth.getSession(); return data.session; }
