@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
+<link rel="icon" href="data:,">
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>VSS Power Engineering Services Ltd. — Quotation Management</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -86,49 +87,44 @@ if(!SUPABASE_URL || !/^https:\/\/.+\.supabase\.co$/i.test(SUPABASE_URL)){
 if(!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY.startsWith('sb_publishable_')){
   throw new Error('Invalid SUPABASE_ANON_KEY. Use the Supabase anon public JWT key from Project Settings > API.');
 }
-/*const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);*/
-window.APP_SUPABASE = window.APP_SUPABASE || {};
-window.APP_SUPABASE.client =
-  window.APP_SUPABASE.client ||
-  window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const supabase = window.APP_SUPABASE.client;
+const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /* ---- Supabase helpers ---- */
-async function sbGetSession(){ const { data } = await supabase.auth.getSession(); return data.session; }
-async function sbSignIn(email, password){ return supabase.auth.signInWithPassword({ email, password }); }
-async function sbSignOut(){ return supabase.auth.signOut(); }
-async function sbSignUp(email, password){ return supabase.auth.signUp({ email, password }); }
+async function sbGetSession(){ const { data } = await sbClient.auth.getSession(); return data.session; }
+async function sbSignIn(email, password){ return sbClient.auth.signInWithPassword({ email, password }); }
+async function sbSignOut(){ return sbClient.auth.signOut(); }
+async function sbSignUp(email, password){ return sbClient.auth.signUp({ email, password }); }
 
 async function sbLoadCompanySettings(){
-  const { data } = await supabase.from('company_settings').select('*').limit(1).single();
+  const { data } = await sbClient.from('company_settings').select('*').limit(1).single();
   return data;
 }
 async function sbSaveCompanySettings(settings){
-  const { data: existing } = await supabase.from('company_settings').select('id').limit(1).single();
+  const { data: existing } = await sbClient.from('company_settings').select('id').limit(1).single();
   if(existing && existing.id){
-    return supabase.from('company_settings').update(settings).eq('id', existing.id);
+    return sbClient.from('company_settings').update(settings).eq('id', existing.id);
   } else {
-    return supabase.from('company_settings').insert(settings);
+    return sbClient.from('company_settings').insert(settings);
   }
 }
 
 async function sbLoadClients(){
-  const { data, error } = await supabase.from('customers').select('*').order('company_name');
+  const { data, error } = await sbClient.from('customers').select('*').order('company_name');
   if(error){ console.error('Load customers:', error); return []; }
   return (data||[]).map(sbClientToLocal);
 }
 async function sbSaveClient(c){
   const row = localClientToSb(c);
   if(c._sbId){
-    const { error } = await supabase.from('customers').update(row).eq('id', c._sbId);
+    const { error } = await sbClient.from('customers').update(row).eq('id', c._sbId);
     return error;
   } else {
-    const { error } = await supabase.from('customers').insert(row);
+    const { error } = await sbClient.from('customers').insert(row);
     return error;
   }
 }
 async function sbDeleteClient(sbId){
-  const { error } = await supabase.from('customers').delete().eq('id', sbId);
+  const { error } = await sbClient.from('customers').delete().eq('id', sbId);
   return error;
 }
 async function sbFindOrCreateClient(c){
@@ -140,7 +136,7 @@ async function sbFindOrCreateClient(c){
   }
   // Find by company name (case insensitive)
   console.log('[DEBUG] Searching for existing customer...');
-  const { data: existing, error: existingError } = await supabase.from('customers').select('*').ilike('company_name', company).limit(1);
+  const { data: existing, error: existingError } = await sbClient.from('customers').select('*').ilike('company_name', company).limit(1);
   if(existingError) console.error('[DEBUG] Customer search error:', existingError);
   if(existing && existing.length>0) {
     console.log('[DEBUG] Found existing customer:', existing[0]);
@@ -149,7 +145,7 @@ async function sbFindOrCreateClient(c){
   console.log('[DEBUG] No existing customer, creating new one...');
   const row = localClientToSb({ ...c, company });
   console.log('[DEBUG] Customer row to insert:', row);
-  const { data, error } = await supabase.from('customers').insert(row).select().single();
+  const { data, error } = await sbClient.from('customers').insert(row).select().single();
   if(error) console.error('[DEBUG] Customer insert error:', error);
   if(data) console.log('[DEBUG] Customer inserted:', data);
   return { data, error };
@@ -164,7 +160,7 @@ function localClientToSb(c){
 
 async function sbNextQuotationNumber(prefix){
   const year = new Date().getFullYear();
-  const { data } = await supabase.from('quotations').select('quotation_number').ilike('quotation_number', `${prefix}-${year}-%`).order('quotation_number', { ascending: false }).limit(1);
+  const { data } = await sbClient.from('quotations').select('quotation_number').ilike('quotation_number', `${prefix}-${year}-%`).order('quotation_number', { ascending: false }).limit(1);
   let seq = 1;
   if(data && data.length > 0){
     const last = data[0].quotation_number;
@@ -216,7 +212,7 @@ async function sbSaveQuotation(q, settings){
   
   if(quotationId){
     console.log('[DEBUG] Updating existing quotation...');
-    const { error } = await supabase.from('quotations').update(qRow).eq('id', quotationId);
+    const { error } = await sbClient.from('quotations').update(qRow).eq('id', quotationId);
     if(error) {
       console.error('[DEBUG] Quotation update error:', error);
       throw new Error('Quotation update failed: ' + error.message);
@@ -224,7 +220,7 @@ async function sbSaveQuotation(q, settings){
     console.log('[DEBUG] Quotation updated successfully');
   } else {
     console.log('[DEBUG] Inserting new quotation...');
-    const { data, error } = await supabase.from('quotations').insert(qRow).select('id').single();
+    const { data, error } = await sbClient.from('quotations').insert(qRow).select('id').single();
     if(error) {
       console.error('[DEBUG] Quotation insert error:', error);
       throw new Error('Quotation insert failed: ' + error.message);
@@ -235,7 +231,7 @@ async function sbSaveQuotation(q, settings){
   
   // Delete existing items then re-insert
   console.log('[DEBUG] Cleaning up old quotation items...');
-  await supabase.from('quotation_items').delete().eq('quotation_id', quotationId);
+  await sbClient.from('quotation_items').delete().eq('quotation_id', quotationId);
   
   const items = (q.lineItems||[]).map((it, idx)=>({
     quotation_id: quotationId,
@@ -249,7 +245,7 @@ async function sbSaveQuotation(q, settings){
   
   if(items.length>0){
     console.log('[DEBUG] Inserting line items...');
-    const { error: iErr } = await supabase.from('quotation_items').insert(items);
+    const { error: iErr } = await sbClient.from('quotation_items').insert(items);
     if(iErr) console.error('[DEBUG] Items insert error:', iErr);
     else console.log('[DEBUG] Line items inserted successfully');
   }
@@ -259,7 +255,7 @@ async function sbSaveQuotation(q, settings){
 }
 
 async function sbLoadQuotations(){
-  const { data, error } = await supabase.from('quotations').select('id, quotation_number, status, quotation_date, valid_until, total_amount, currency, payload, customers(company_name)').order('created_at', { ascending: false });
+  const { data, error } = await sbClient.from('quotations').select('id, quotation_number, status, quotation_date, valid_until, total_amount, currency, payload, customers(company_name)').order('created_at', { ascending: false });
   if(error){ console.error('Load quotations:', error); return []; }
   return (data||[]).map(row=>{
     let q = {};
@@ -272,7 +268,7 @@ async function sbLoadQuotations(){
 }
 
 async function sbDeleteQuotation(sbId){
-  const { error } = await supabase.from('quotations').delete().eq('id', sbId);
+  const { error } = await sbClient.from('quotations').delete().eq('id', sbId);
   return error;
 }
 
@@ -898,7 +894,7 @@ function LoginGate(){
 
   useEffect(()=>{
     sbGetSession().then(s=>{ setSession(s); setChecking(false); });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, s)=>{ setSession(s); setChecking(false); });
+    const { data: listener } = sbClient.auth.onAuthStateChange((_event, s)=>{ setSession(s); setChecking(false); });
     return ()=>listener.subscription.unsubscribe();
   }, []);
 
