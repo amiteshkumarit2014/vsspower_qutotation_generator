@@ -1643,7 +1643,7 @@ function buildPdf(q, settings){
   totalLine(q.taxExempt ? 'Tax (Exempt)' : `Tax`, money(totals.tax));
   doc.setDrawColor(196,135,10); doc.setLineWidth(1.2);
   doc.line(totalsX-8, y-2, pageW-marginX, y-2);
-  y += 6;
+  y += 16;
   totalLine('GRAND TOTAL', money(totals.grandTotal), true);
   y += 10;
 
@@ -1666,13 +1666,13 @@ function buildPdf(q, settings){
 
   sectionTitle('Commercial Terms');
   const c = q.commercial;
-  paragraph(`Payment Terms: ${c.paymentTerms}`);
-  paragraph(`Quotation Validity: ${c.validityDays} days (valid until ${formatDate(q.validUntil)})`);
-  if(c.projectDuration) paragraph(`Project Duration: ${c.projectDuration}`);
-  paragraph(`Delivery Method: ${c.deliveryMethod}`);
-  if(c.clientResponsibilities) paragraph(`Client Responsibilities: ${c.clientResponsibilities}`);
-  if(c.vssResponsibilities) paragraph(`VSS Power Responsibilities: ${c.vssResponsibilities}`);
-  if(c.notes) paragraph(`Notes: ${c.notes}`);
+  paragraph(`Payment Terms: ${c.paymentTerms}`, { gap: 6 });
+  paragraph(`Quotation Validity: ${c.validityDays} days (valid until ${formatDate(q.validUntil)})`, { gap: 6 });
+  if(c.projectDuration) paragraph(`Project Duration: ${c.projectDuration}`, { gap: 6 });
+  paragraph(`Delivery Method: ${c.deliveryMethod}`, { gap: 6 });
+  if(c.clientResponsibilities) paragraph(`Client Responsibilities: ${c.clientResponsibilities}`, { gap: 6 });
+  if(c.vssResponsibilities) paragraph(`VSS Power Responsibilities: ${c.vssResponsibilities}`, { gap: 6 });
+  if(c.notes) paragraph(`Notes: ${c.notes}`, { gap: 6 });
 
   // ---- Signature section ----
   checkSpace(120);
