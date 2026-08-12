@@ -1528,21 +1528,22 @@ function buildPdf(q, settings){
     if(y + needed > pageH - 60){ doc.addPage(); y = 50; }
   };
   const sectionTitle = (title) => {
-    checkSpace(30);
+    y += 10;
+    checkSpace(34);
     doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(15,31,43);
     doc.text(title.toUpperCase(), marginX, y);
     doc.setDrawColor(196,135,10); doc.setLineWidth(1.2);
     doc.line(marginX, y+4, marginX+28, y+4);
-    y += 16;
+    y += 18;
     doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(30,30,30);
   };
   const paragraph = (text, opts) => {
     if(!text) return;
     const width = pageW - marginX*2;
     const lines = doc.splitTextToSize(text, width);
-    checkSpace(lines.length*12 + 6);
+    checkSpace(lines.length*13 + 6);
     doc.text(lines, marginX, y);
-    y += lines.length*12 + (opts && opts.gap!==undefined ? opts.gap : 10);
+    y += lines.length*13 + (opts && opts.gap!==undefined ? opts.gap : 10);
   };
   const bulletList = (items) => {
     items.forEach((it,idx)=>{
@@ -1637,7 +1638,7 @@ function buildPdf(q, settings){
   };
   doc.setDrawColor(216,220,224); doc.setLineWidth(0.5);
   doc.line(totalsX-8, y-4, pageW-marginX, y-4);
-  y += 4;
+  y += 14;
   totalLine('Subtotal', money(totals.subtotal));
   totalLine('Discount', '-'+money(totals.servicesDiscount + totals.overallDiscount));
   totalLine(q.taxExempt ? 'Tax (Exempt)' : `Tax`, money(totals.tax));
@@ -1666,39 +1667,63 @@ function buildPdf(q, settings){
 
   sectionTitle('Commercial Terms');
   const c = q.commercial;
-  paragraph(`Payment Terms: ${c.paymentTerms}`, { gap: 6 });
-  paragraph(`Quotation Validity: ${c.validityDays} days (valid until ${formatDate(q.validUntil)})`, { gap: 6 });
-  if(c.projectDuration) paragraph(`Project Duration: ${c.projectDuration}`, { gap: 6 });
-  paragraph(`Delivery Method: ${c.deliveryMethod}`, { gap: 6 });
-  if(c.clientResponsibilities) paragraph(`Client Responsibilities: ${c.clientResponsibilities}`, { gap: 6 });
-  if(c.vssResponsibilities) paragraph(`VSS Power Responsibilities: ${c.vssResponsibilities}`, { gap: 6 });
-  if(c.notes) paragraph(`Notes: ${c.notes}`, { gap: 6 });
+  paragraph(`Payment Terms: ${c.paymentTerms}`, { gap: 9 });
+  paragraph(`Quotation Validity: ${c.validityDays} days (valid until ${formatDate(q.validUntil)})`, { gap: 9 });
+  if(c.projectDuration) paragraph(`Project Duration: ${c.projectDuration}`, { gap: 9 });
+  paragraph(`Delivery Method: ${c.deliveryMethod}`, { gap: 9 });
+  if(c.clientResponsibilities) paragraph(`Client Responsibilities: ${c.clientResponsibilities}`, { gap: 9 });
+  if(c.vssResponsibilities) paragraph(`VSS Power Responsibilities: ${c.vssResponsibilities}`, { gap: 9 });
+  if(c.notes) paragraph(`Notes: ${c.notes}`, { gap: 9 });
 
-  // ---- Signature section ----
-  checkSpace(120);
+  // ---- Signature / Acceptance section ----
+  checkSpace(160);
   sectionTitle('Acceptance');
-  doc.setFont('helvetica','normal'); doc.setFontSize(9);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(30,30,30);
   doc.setDrawColor(90,100,110); doc.setLineWidth(0.7);
   doc.rect(marginX, y-8, 9, 9);
   doc.text('I accept this quotation and the associated terms and conditions.', marginX+15, y);
-  y += 26;
-  const colW = (pageW - marginX*2 - 20)/2;
-  doc.setFont('helvetica','bold'); doc.setFontSize(9);
-  doc.text('PREPARED BY', marginX, y);
-  doc.text('ACCEPTED BY', marginX+colW+20, y);
-  y += 14;
-  doc.setFont('helvetica','normal'); doc.setFontSize(9);
-  doc.text(q.preparedBy.name || '—', marginX, y);
-  doc.text('Name: ______________________', marginX+colW+20, y);
-  y += 13;
-  doc.text(q.preparedBy.designation || '—', marginX, y);
-  doc.text('Designation: ______________________', marginX+colW+20, y);
-  y += 13;
-  doc.text(q.preparedBy.email || '—', marginX, y);
-  doc.text('Signature: ______________________', marginX+colW+20, y);
-  y += 13;
-  doc.text('', marginX, y);
-  doc.text('Date: ______________________', marginX+colW+20, y);
+  y += 32;
+
+  const colGap = 30;
+  const colW = (pageW - marginX*2 - colGap)/2;
+  const leftX = marginX;
+  const rightX = marginX + colW + colGap;
+  const headerY = y;
+
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(15,31,43);
+  doc.text('PREPARED BY', leftX, headerY);
+  doc.text('ACCEPTED BY', rightX, headerY);
+  doc.setDrawColor(196,135,10); doc.setLineWidth(1.2);
+  doc.line(leftX, headerY+5, leftX+26, headerY+5);
+  doc.line(rightX, headerY+5, rightX+26, headerY+5);
+
+  // Left column — Prepared By (already-known details)
+  let leftY = headerY + 22;
+  doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.setTextColor(15,31,43);
+  doc.text(q.preparedBy.name || '—', leftX, leftY);
+  leftY += 15;
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(90,100,110);
+  if(q.preparedBy.designation){ doc.text(q.preparedBy.designation, leftX, leftY); leftY += 13; }
+  if(q.preparedBy.email){ doc.text(q.preparedBy.email, leftX, leftY); leftY += 13; }
+  leftY += 8;
+  doc.setDrawColor(196,135,10); doc.setLineWidth(0.8);
+  doc.line(leftX, leftY, leftX+colW-10, leftY);
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(140,148,154);
+  doc.text('AUTHORISED SIGNATURE', leftX, leftY+10);
+  leftY += 10;
+
+  // Right column — Accepted By (blank fields for client to complete)
+  const acceptFields = ['Name', 'Designation', 'Signature', 'Date'];
+  let rightY = headerY + 22;
+  doc.setDrawColor(180,187,192); doc.setLineWidth(0.8);
+  acceptFields.forEach(label => {
+    doc.line(rightX, rightY, rightX+colW-10, rightY);
+    doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(140,148,154);
+    doc.text(label.toUpperCase(), rightX, rightY+10);
+    rightY += 27;
+  });
+
+  y = Math.max(leftY, rightY);
 
   // ---- Footer with page numbers on all pages ----
   const pageCount = doc.internal.getNumberOfPages();
