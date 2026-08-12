@@ -76,7 +76,16 @@ const STORAGE_KEYS = {
 
 /* ============================== SUPABASE CONFIG ============================== */
 const SUPABASE_URL = 'https://mrrbmaeuvleikyzczzkr.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_4sGVEj-rWlO7kE-3fIqFzw_xSM4oOUQ';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ycmJtYWV1dmxlaWt5emN6emtyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NjE0MzIsImV4cCI6MjEwMjAzNzQzMn0.AgT2sUE0wrzNP2cHglPh7WvEIdr_QVSZXqm5vfWV8E4';
+if(!window.supabase || typeof window.supabase.createClient !== 'function'){
+  throw new Error('Supabase client library failed to load from CDN.');
+}
+if(!SUPABASE_URL || !/^https:\/\/.+\.supabase\.co$/i.test(SUPABASE_URL)){
+  throw new Error('Invalid SUPABASE_URL.');
+}
+if(!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY.startsWith('sb_publishable_')){
+  throw new Error('Invalid SUPABASE_ANON_KEY. Use the Supabase anon public JWT key from Project Settings > API.');
+}
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /* ---- Supabase helpers ---- */
@@ -118,10 +127,12 @@ async function sbDeleteClient(sbId){
   return error;
 }
 async function sbFindOrCreateClient(c){
+  const company = (c && typeof c.company === 'string') ? c.company.trim() : '';
+  if(!company) return { data: null, error: null };
   // Find by company name (case insensitive)
-  const { data: existing } = await supabase.from('customers').select('*').ilike('company_name', c.company.trim()).limit(1);
+  const { data: existing } = await supabase.from('customers').select('*').ilike('company_name', company).limit(1);
   if(existing && existing.length>0) return { data: existing[0] };
-  const row = localClientToSb(c);
+  const row = localClientToSb({ ...c, company });
   const { data, error } = await supabase.from('customers').insert(row).select().single();
   return { data, error };
 }
@@ -715,8 +726,9 @@ function App({ user }){
         });
       }
     } catch(e){
-      console.error('Supabase save error:', e);
-      notify('Saved locally. DB sync failed: ' + e.message, 'error');
+      console.error('Supabase save error (full object):', e);
+      notify('Saved locally. DB sync failed: ' + (e && e.message ? e.message : 'Unknown error'), 'error');
+      alert('Database save failed. Changes are only local in this tab.\n\n' + (e && e.message ? e.message : 'Unknown error') + '\n\nCheck Console for full error details.');
     }
   };
 
@@ -1292,7 +1304,7 @@ function CommercialStep({ q, update }){
         <div className="space-y-2">
           {q.deliverables.map((del,idx)=>(
             <div key={del.id} className="grid grid-cols-12 gap-2 items-center">
-              <span className="col-span-1 text-xs font-mono text-[var(--muted)]">{idx+1}.</span>
+              <span className="col-span-1 text-xs font-mono text-[var(--muted)] pt-2.5 w-5">{idx+1}.</span>
               <input className={inputCls + ' col-span-5'} placeholder="Deliverable" value={del.text} onChange={e=>updateDeliverable(del.id,'text',e.target.value)} />
               <input className={inputCls + ' col-span-2'} placeholder="Format" value={del.format} onChange={e=>updateDeliverable(del.id,'format',e.target.value)} />
               <input className={inputCls + ' col-span-2'} placeholder="Revision" value={del.revision} onChange={e=>updateDeliverable(del.id,'revision',e.target.value)} />
@@ -1324,11 +1336,11 @@ function CommercialStep({ q, update }){
       <div className="grid grid-cols-2 gap-10">
         <div>
           <h2 className="font-display text-lg font-semibold mb-4">Assumptions</h2>
-          <ListEditor {...listHelpers('assumptions')} placeholder="Assumption" />
+          {listField('assumptions','Assumption')}
         </div>
         <div>
           <h2 className="font-display text-lg font-semibold mb-4">Exclusions</h2>
-          <ListEditor {...listHelpers('exclusions')} placeholder="Exclusion" />
+          {listField('exclusions','Exclusion')}
         </div>
       </div>
 
@@ -1513,12 +1525,14 @@ function buildPdf(q, settings){
     doc.text(val, pageW-marginX, y, { align:'right' });
     y += bold?16:13;
   };
-  doc.setDrawColor(216,220,224); doc.line(totalsX-8, y-4, pageW-marginX, y-4);
+  doc.setDrawColor(216,220,224); doc.setLineWidth(0.5);
+  doc.line(totalsX-8, y-4, pageW-marginX, y-4);
   y += 4;
   totalLine('Subtotal', money(totals.subtotal));
   totalLine('Discount', '-'+money(totals.servicesDiscount + totals.overallDiscount));
   totalLine(q.taxExempt ? 'Tax (Exempt)' : `Tax`, money(totals.tax));
-  doc.setDrawColor(196,135,10); doc.line(totalsX-8, y-2, pageW-marginX, y-2);
+  doc.setDrawColor(196,135,10); doc.setLineWidth(1.2);
+  doc.line(totalsX-8, y-2, pageW-marginX, y-2);
   y += 6;
   totalLine('GRAND TOTAL', money(totals.grandTotal), true);
   y += 10;
@@ -2281,12 +2295,15 @@ function QuotationsPage({ quotations, openQuotation, duplicateQuotation, deleteQ
 
   return (
     <div className="p-8 space-y-6">
-      <div>
-        <h1 className="font-display text-2xl font-bold">Quotations</h1>
-        <p className="text-sm text-[var(--muted)] mt-1">All quotations across clients and projects.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="font-display text-2xl font-bold">Quotations</h1>
+          <p className="text-sm text-[var(--muted)] mt-1">All quotations across clients and projects.</p>
+        </div>
+        <button onClick={openNew} className="px-4 py-2 text-sm rounded text-white" style={{background:'var(--steel)'}}>+ Add Quotation</button>
       </div>
       <div className="bg-white rounded-lg border border-[var(--line)]">
-        <div className="flex flex-wrap items-center gap-3 p-4 border-b border-[var(--line)]">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-[var(--line)]">
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search number, client, project..."
             className="px-3 py-2 border border-[var(--line)] rounded text-sm w-64" />
           <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} className="px-3 py-2 border border-[var(--line)] rounded text-sm">
@@ -2422,8 +2439,8 @@ function Dashboard({ quotations, setView, openQuotation, duplicateQuotation, del
               {filtered.map(q=>(
                 <tr key={q.id} className="border-b border-[var(--line)] last:border-0 hover:bg-gray-50">
                   <td className="px-4 py-3 font-mono text-xs">{q.number}{q.revision>0 && <span className="text-[var(--muted)]"> Rev{q.revision}</span>}</td>
-                  <td className="px-4 py-3">{q.client.company || <span className="text-[var(--muted)]">—</span>}</td>
-                  <td className="px-4 py-3">{q.project.name || <span className="text-[var(--muted)]">—</span>}</td>
+                  <td className="px-4 py-3">{q.client.company || '—'}</td>
+                  <td className="px-4 py-3">{q.project.name || '—'}</td>
                   <td className="px-4 py-3 font-mono text-xs">{formatDate(q.date)}</td>
                   <td className="px-4 py-3 font-mono text-xs">{formatDate(q.validUntil)}</td>
                   <td className="px-4 py-3 text-right font-mono">{formatMoney(calcTotals(q).grandTotal, q.currency)}</td>
@@ -2445,6 +2462,3 @@ function Dashboard({ quotations, setView, openQuotation, duplicateQuotation, del
     </div>
   );
 }
-</script>
-</body>
-</html>
