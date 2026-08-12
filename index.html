@@ -774,9 +774,16 @@ function App({ user }){
     setView('wizard');
   };
 
-  const useTemplate = (t) => {
-    const q = blankQuotation(settings);
-    setSettingsState(prev=>({ ...prev, nextSeq: prev.nextSeq + 1 }));
+  const useTemplate = async (t) => {
+    let num;
+    try {
+      num = await sbNextQuotationNumber(settings.prefix || 'VSS-Q');
+    } catch(e) {
+      num = nextQuotationNumber(settings);
+      setSettingsState(prev=>({ ...prev, nextSeq: prev.nextSeq + 1 }));
+    }
+    const q = blankQuotation({ ...settings, _overrideNumber: num });
+    q.number = num;
     q.scope = t.scope;
     q.deliverables = t.deliverables.map(d=>({ id: uid('del'), text:d, format:'', revision:'Rev 0', dueDate:'' }));
     q.assumptions = [...t.assumptions];
@@ -1439,11 +1446,11 @@ function CommercialStep({ q, update }){
       <div className="grid grid-cols-2 gap-10">
         <div>
           <h2 className="font-display text-lg font-semibold mb-4">Assumptions</h2>
-          {listField('assumptions','Assumption')}
+          <ListEditor {...listHelpers('assumptions')} placeholder="Assumption" />
         </div>
         <div>
           <h2 className="font-display text-lg font-semibold mb-4">Exclusions</h2>
-          {listField('exclusions','Exclusion')}
+          <ListEditor {...listHelpers('exclusions')} placeholder="Exclusion" />
         </div>
       </div>
 
