@@ -6,13 +6,13 @@
 <title>VSS Power Engineering Services Ltd. — Quotation Management</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<link rel="stylesheet" href="vendor/tailwind.min.css">
+<script src="vendor/react.production.min.js"></script>
+<script src="vendor/react-dom.production.min.js"></script>
+<script src="vendor/babel.min.js"></script>
+<script src="vendor/jspdf.umd.min.js"></script>
+<script src="vendor/jspdf.plugin.autotable.min.js"></script>
+<script src="vendor/supabase.js"></script>
 <style>
   :root{
     --ink:#0E1F2B;
@@ -49,8 +49,8 @@
 <div id="root"></div>
 <div id="load-fallback" style="display:none; font-family:sans-serif; max-width:640px; margin:60px auto; padding:24px; border:1px solid #e0b4a4; background:#fbe7e1; border-radius:8px; color:#7a2e1a;">
   <strong>This app didn't finish loading.</strong>
-  <p style="margin-top:8px;">This usually means one of the required scripts (React, Babel, or Tailwind, loaded from cdnjs.cloudflare.com / cdn.tailwindcss.com) was blocked — commonly by an ad-blocker, browser privacy shield, or a corporate/school network filter.</p>
-  <p style="margin-top:8px;">Try: disabling ad-blocker/shields for this page, opening in a different browser or private window, or checking the browser Console (F12) for the exact blocked URL.</p>
+  <p style="margin-top:8px;">One of the required local scripts (React, Babel, Tailwind, jsPDF, or Supabase, served from this site's own /vendor folder) failed to load or run.</p>
+  <p style="margin-top:8px;">Try: refreshing the page, opening in a different browser or private window, or checking the browser Console (F12) for the exact error and file that failed.</p>
 </div>
 <script>
   setTimeout(function(){
