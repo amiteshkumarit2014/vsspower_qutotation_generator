@@ -128,12 +128,25 @@ async function sbDeleteClient(sbId){
 }
 async function sbFindOrCreateClient(c){
   const company = (c && typeof c.company === 'string') ? c.company.trim() : '';
-  if(!company) return { data: null, error: null };
+  console.log('[DEBUG] sbFindOrCreateClient called with company:', company);
+  if(!company) {
+    console.log('[DEBUG] No company provided, returning null');
+    return { data: null, error: null };
+  }
   // Find by company name (case insensitive)
-  const { data: existing } = await supabase.from('customers').select('*').ilike('company_name', company).limit(1);
-  if(existing && existing.length>0) return { data: existing[0] };
+  console.log('[DEBUG] Searching for existing customer...');
+  const { data: existing, error: existingError } = await supabase.from('customers').select('*').ilike('company_name', company).limit(1);
+  if(existingError) console.error('[DEBUG] Customer search error:', existingError);
+  if(existing && existing.length>0) {
+    console.log('[DEBUG] Found existing customer:', existing[0]);
+    return { data: existing[0] };
+  }
+  console.log('[DEBUG] No existing customer, creating new one...');
   const row = localClientToSb({ ...c, company });
+  console.log('[DEBUG] Customer row to insert:', row);
   const { data, error } = await supabase.from('customers').insert(row).select().single();
+  if(error) console.error('[DEBUG] Customer insert error:', error);
+  if(data) console.log('[DEBUG] Customer inserted:', data);
   return { data, error };
 }
 
@@ -157,14 +170,25 @@ async function sbNextQuotationNumber(prefix){
 }
 
 async function sbSaveQuotation(q, settings){
+  console.log('[DEBUG] sbSaveQuotation called with quotation number:', q.number);
   const totals = calcTotals(q);
+  console.log('[DEBUG] Calculated totals:', totals);
+  
   // Find or create customer
   let customerId = null;
   if(q.client.company){
+    console.log('[DEBUG] Client company present:', q.client.company);
     const { data: cust, error: custErr } = await sbFindOrCreateClient(q.client);
-    if(custErr){ throw new Error('Customer save failed: ' + custErr.message); }
+    if(custErr){ 
+      console.error('[DEBUG] Customer creation/find failed:', custErr);
+      throw new Error('Customer save failed: ' + custErr.message); 
+    }
     customerId = cust ? cust.id : null;
+    console.log('[DEBUG] Customer ID resolved to:', customerId);
+  } else {
+    console.log('[DEBUG] No client company, skipping customer creation');
   }
+  
   const qRow = {
     quotation_number: q.number,
     customer_id: customerId,
@@ -180,17 +204,34 @@ async function sbSaveQuotation(q, settings){
     terms_and_conditions: q.commercial ? q.commercial.paymentTerms||'' : '',
     payload: JSON.stringify(q)
   };
+  console.log('[DEBUG] Quotation row prepared:', qRow);
+  
   let quotationId = q._sbId || null;
+  console.log('[DEBUG] Existing quotationId?', quotationId);
+  
   if(quotationId){
+    console.log('[DEBUG] Updating existing quotation...');
     const { error } = await supabase.from('quotations').update(qRow).eq('id', quotationId);
-    if(error) throw new Error('Quotation update failed: ' + error.message);
+    if(error) {
+      console.error('[DEBUG] Quotation update error:', error);
+      throw new Error('Quotation update failed: ' + error.message);
+    }
+    console.log('[DEBUG] Quotation updated successfully');
   } else {
+    console.log('[DEBUG] Inserting new quotation...');
     const { data, error } = await supabase.from('quotations').insert(qRow).select('id').single();
-    if(error) throw new Error('Quotation insert failed: ' + error.message);
+    if(error) {
+      console.error('[DEBUG] Quotation insert error:', error);
+      throw new Error('Quotation insert failed: ' + error.message);
+    }
     quotationId = data.id;
+    console.log('[DEBUG] Quotation inserted with ID:', quotationId);
   }
+  
   // Delete existing items then re-insert
+  console.log('[DEBUG] Cleaning up old quotation items...');
   await supabase.from('quotation_items').delete().eq('quotation_id', quotationId);
+  
   const items = (q.lineItems||[]).map((it, idx)=>({
     quotation_id: quotationId,
     description: it.service + (it.description ? '\n' + it.description : ''),
@@ -199,10 +240,16 @@ async function sbSaveQuotation(q, settings){
     total_price: lineItemAmount(it).total,
     sort_order: idx
   }));
+  console.log('[DEBUG] Line items to insert:', items.length, 'items');
+  
   if(items.length>0){
+    console.log('[DEBUG] Inserting line items...');
     const { error: iErr } = await supabase.from('quotation_items').insert(items);
-    if(iErr) console.error('Items insert error:', iErr);
+    if(iErr) console.error('[DEBUG] Items insert error:', iErr);
+    else console.log('[DEBUG] Line items inserted successfully');
   }
+  
+  console.log('[DEBUG] sbSaveQuotation completed, returning quotationId:', quotationId);
   return quotationId;
 }
 
@@ -703,6 +750,7 @@ function App({ user }){
   };
 
   const saveDraft = async (q) => {
+    console.log('[DEBUG] saveDraft initiated for quotation:', q.number);
     // Update local state immediately
     setQuotationsState(prev=>{
       const exists = prev.some(x=>x.id===q.id);
@@ -710,8 +758,11 @@ function App({ user }){
     });
     // Sync to Supabase
     try {
+      console.log('[DEBUG] Calling sbSaveQuotation...');
       const sbId = await sbSaveQuotation(q, settings);
+      console.log('[DEBUG] sbSaveQuotation returned:', sbId);
       if(!q._sbId && sbId){
+        console.log('[DEBUG] Updating quotation with _sbId:', sbId);
         setQuotationsState(prev=>prev.map(x=>x.id===q.id?{...x,_sbId:sbId}:x));
         if(activeQuotation && activeQuotation.id === q.id){
           setActiveQuotation(prev=>prev?{...prev, _sbId:sbId}:prev);
@@ -719,14 +770,17 @@ function App({ user }){
       }
       // auto-add client to local db
       if(q.client.company){
+        console.log('[DEBUG] Auto-adding client to local state');
         setClientsState(prev=>{
           const found = prev.some(c=>c.company.toLowerCase()===q.client.company.toLowerCase());
           if(found) return prev;
           return [...prev, { id: uid('cli'), company:q.client.company, contact:q.client.contact, email:q.client.email, phone:q.client.phone, country:q.client.country, address:q.client.address, website:q.client.website }];
         });
       }
+      console.log('[DEBUG] saveDraft completed successfully');
     } catch(e){
-      console.error('Supabase save error (full object):', e);
+      console.error('[DEBUG] saveDraft FAILED with error:', e);
+      console.error('[DEBUG] Full error object:', JSON.stringify(e, Object.getOwnPropertyNames(e)));
       notify('Saved locally. DB sync failed: ' + (e && e.message ? e.message : 'Unknown error'), 'error');
       alert('Database save failed. Changes are only local in this tab.\n\n' + (e && e.message ? e.message : 'Unknown error') + '\n\nCheck Console for full error details.');
     }
