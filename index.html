@@ -1004,6 +1004,7 @@ function LoginGate(){
         <button type="submit" disabled={loading} className="w-full font-semibold py-2.5 rounded mb-4" style={{background:'var(--steel)',color:'white',opacity:loading?0.7:1}}>
           {loading ? (mode==='login'?'Signing in…':'Creating account…') : (mode==='login'?'Sign In':'Create Account')}
         </button>
+ 		{/*
         <div className="text-center text-sm" style={{color:'var(--muted)'}}>
           {mode==='login' ? (
             <>Don't have an account? <button type="button" onClick={()=>{setMode('signup');setError('');}} className="font-semibold" style={{color:'var(--steel)'}}>Sign Up</button></>
@@ -1011,6 +1012,7 @@ function LoginGate(){
             <>Already have an account? <button type="button" onClick={()=>{setMode('login');setError('');}} className="font-semibold" style={{color:'var(--steel)'}}>Sign In</button></>
           )}
         </div>
+ 		*/}
       </form>
     </div>
   );
