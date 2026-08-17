@@ -1713,8 +1713,12 @@ function buildPdf(q, settings){
     head: [['#','Description','Qty','Unit','Rate','Amount']],
     body: rows,
     styles: { font:'helvetica', fontSize:8.5, cellPadding:5, textColor:[30,30,30], lineColor:[216,220,224], lineWidth:0.5 },
+    // theme:'plain' (instead of the default 'striped') stops autoTable from painting an
+    // opaque white/grey fill behind every body cell — that fill was sitting on top of the
+    // watermark image (drawn earlier, underneath) and blanking it out across the whole
+    // table. Row separators still come from the cell borders in `styles` above.
+    theme: 'plain',
     headStyles: { fillColor:[31,59,77], textColor:255, fontStyle:'bold' },
-    alternateRowStyles: { fillColor:[247,248,247] },
     columnStyles: { 0:{cellWidth:24}, 2:{cellWidth:36,halign:'right'}, 3:{cellWidth:65}, 4:{cellWidth:70,halign:'right'}, 5:{cellWidth:75,halign:'right'} },
     didDrawPage: () => {}
   });
@@ -1728,6 +1732,7 @@ function buildPdf(q, settings){
       head: [['Expense Category','Description','Qty','Unit Cost','Total']],
       body: q.expenses.map(e=>[e.category, e.description, String(e.qty), money(e.unitCost), money(expenseAmount(e))]),
       styles: { font:'helvetica', fontSize:8.5, cellPadding:5, textColor:[30,30,30], lineColor:[216,220,224], lineWidth:0.5 },
+      theme: 'plain', // see note above — keeps the watermark visible through the table body
       headStyles: { fillColor:[91,107,117], textColor:255, fontStyle:'bold' },
     });
     y = doc.lastAutoTable.finalY + 14;
@@ -1807,13 +1812,16 @@ function buildPdf(q, settings){
   const boxLeft = marginX - boxPad;
   const boxRight = pageW - marginX + boxPad;
 
-  // Card frame
-  doc.setFillColor(250,250,248);
+  // Card frame — border only (no fill). The card used to be filled with an opaque
+  // near-white colour ('FD' = fill+draw), which sat on top of the watermark image drawn
+  // earlier underneath and blanked it out across the whole Prepared By / Accepted By box.
+  // Drawing the border only ('D') keeps the card outline while letting the watermark
+  // show through.
   doc.setDrawColor(210,214,217); doc.setLineWidth(0.8);
   if(typeof doc.roundedRect === 'function'){
-    doc.roundedRect(boxLeft, boxTop, boxRight-boxLeft, boxBottom-boxTop, 6, 6, 'FD');
+    doc.roundedRect(boxLeft, boxTop, boxRight-boxLeft, boxBottom-boxTop, 6, 6, 'D');
   } else {
-    doc.rect(boxLeft, boxTop, boxRight-boxLeft, boxBottom-boxTop, 'FD');
+    doc.rect(boxLeft, boxTop, boxRight-boxLeft, boxBottom-boxTop, 'D');
   }
 
   doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(0,0,0);
