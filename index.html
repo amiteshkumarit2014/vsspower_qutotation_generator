@@ -1591,8 +1591,23 @@ function buildPdf(q, settings){
   const money = (n) => sym + (Number(n)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});
   const totals = calcTotals(q);
 
+  // ---- Watermark: subtle, centred brand logo, drawn behind everything else ----
+  // jsPDF paints in call order (each call stacks on top of the previous one), so the
+  // watermark must be the FIRST thing drawn on a page — before the header, before any
+  // body text — for it to end up as the bottom-most layer. It is drawn here, at the
+  // moment each page is created, rather than in a pass after all content is added.
+  const drawWatermark = () => {
+    try{
+      const wmSize = Math.min(pageW, pageH) * 0.5;
+      const wmX = (pageW - wmSize) / 2;
+      const wmY = (pageH - wmSize) / 2;
+      doc.addImage(VSS_LOGO_WATERMARK_DATA_URI, 'PNG', wmX, wmY, wmSize, wmSize);
+    }catch(e){ /* watermark is a visual nicety only — never block PDF generation */ }
+  };
+  drawWatermark();
+
   const checkSpace = (needed) => {
-    if(y + needed > pageH - 60){ doc.addPage(); y = 50; }
+    if(y + needed > pageH - 60){ doc.addPage(); drawWatermark(); y = 50; }
   };
   const sectionTitle = (title) => {
     y += 10;
@@ -1625,21 +1640,37 @@ function buildPdf(q, settings){
   };
 
   // ---- Header / title block ----
+  const headerH = 64;
   doc.setFillColor(0,0,0);
-  doc.rect(0,0,pageW,64,'F');
-  // Brand logo (top-left of header)
+  doc.rect(0,0,pageW,headerH,'F');
+  // Brand logo (top-left of header, vertically centred in the header bar)
+  const logoSize = 40;
+  const logoY = (headerH - logoSize) / 2;
+  let brandTextX = marginX;
   try{
-    doc.addImage(VSS_LOGO_HEADER_DATA_URI, 'PNG', marginX, 12, 40, 40);
-    doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.setTextColor(255,255,255);
-    doc.text(settings.companyName.toUpperCase(), marginX+48, 30);
-    doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(200,210,216);
-    doc.text(settings.footerText, marginX+48, 44);
-  }catch(e){
-    doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.setTextColor(255,255,255);
-    doc.text(settings.companyName.toUpperCase(), marginX, 30);
-    doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(200,210,216);
-    doc.text(settings.footerText, marginX, 44);
+    doc.addImage(VSS_LOGO_HEADER_DATA_URI, 'PNG', marginX, logoY, logoSize, logoSize);
+    brandTextX = marginX + logoSize + 8;
+  }catch(e){ /* fall back to text-only header (brandTextX stays at marginX) if the logo fails to decode */ }
+
+  // Company name: reserve room for the QUOTATION/number/date block on the right, then
+  // shrink the font just enough so the full name always fits on one line next to the
+  // logo, instead of overflowing or overlapping — keeps the header balanced at any
+  // company-name length, on screen and in the generated PDF alike.
+  const rightBlockW = 175;
+  const nameMaxWidth = pageW - brandTextX - marginX - rightBlockW;
+  const nameText = settings.companyName.toUpperCase();
+  doc.setFont('helvetica','bold');
+  let nameFontSize = 15;
+  doc.setFontSize(nameFontSize);
+  while(nameFontSize > 8 && doc.getTextWidth(nameText) > nameMaxWidth){
+    nameFontSize -= 0.5;
+    doc.setFontSize(nameFontSize);
   }
+  doc.setTextColor(255,255,255);
+  doc.text(nameText, brandTextX, 30);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(200,210,216);
+  doc.text(settings.footerText, brandTextX, 44);
+
   doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(225,182,36);
   doc.text('QUOTATION', pageW-marginX, 30, { align:'right' });
   doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(220,220,220);
@@ -1819,20 +1850,8 @@ function buildPdf(q, settings){
 
   y = boxBottom + 14;
 
-  // ---- Watermark: subtle, centred brand logo on every page, behind the footer/text ----
-  // The opacity is pre-baked into the image pixels (blended against white) rather than relying
-  // on jsPDF's GState/opacity support, so it renders identically across PDF viewers and never
-  // interferes with invoice readability.
-  const watermarkPageCount = doc.internal.getNumberOfPages();
-  for(let i=1;i<=watermarkPageCount;i++){
-    doc.setPage(i);
-    try{
-      const wmSize = Math.min(pageW, pageH) * 0.5;
-      const wmX = (pageW - wmSize) / 2;
-      const wmY = (pageH - wmSize) / 2;
-      doc.addImage(VSS_LOGO_WATERMARK_DATA_URI, 'PNG', wmX, wmY, wmSize, wmSize);
-    }catch(e){ /* watermark is a visual nicety only — never block PDF generation */ }
-  }
+  // (Watermark is no longer drawn here — see drawWatermark() above, which runs the
+  // moment each page is created so it always stays behind the content painted after it.)
 
   // ---- Footer with page numbers on all pages ----
   const pageCount = doc.internal.getNumberOfPages();
