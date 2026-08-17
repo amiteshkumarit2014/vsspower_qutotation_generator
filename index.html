@@ -1644,26 +1644,12 @@ function buildPdf(q, settings){
   doc.setFillColor(0,0,0);
   doc.rect(0,0,pageW,headerH,'F');
   // Brand logo (top-left of header, vertically centred in the header bar)
-  // Fit the logo into a bounding box while preserving its true aspect ratio, instead of
-  // forcing it into a fixed square — a forced square stretches/squeezes a non-square source
-  // image, which is what was making the bottom of the circular mark look cut off. The box
-  // also gets a couple of points of top/bottom breathing room so the full circle always
-  // clears the header bar, on every page, no matter how the source logo is exported.
-  const logoBox = 40;
-  const logoPad = 2;
-  let logoW = logoBox, logoH = logoBox;
-  try{
-    const logoProps = doc.getImageProperties(VSS_LOGO_HEADER_DATA_URI);
-    const logoAspect = logoProps.width / logoProps.height;
-    const availH = headerH - logoPad * 2;
-    if(logoAspect >= 1){ logoW = Math.min(logoBox, availH * logoAspect); logoH = logoW / logoAspect; }
-    else { logoH = Math.min(availH, logoBox); logoW = logoH * logoAspect; }
-  }catch(e){ /* getImageProperties failed — fall back to the square box below */ }
-  const logoY = (headerH - logoH) / 2;
+  const logoSize = 40;
+  const logoY = (headerH - logoSize) / 2;
   let brandTextX = marginX;
   try{
-    doc.addImage(VSS_LOGO_HEADER_DATA_URI, 'PNG', marginX, logoY, logoW, logoH);
-    brandTextX = marginX + logoBox + 8;
+    doc.addImage(VSS_LOGO_HEADER_DATA_URI, 'PNG', marginX, logoY, logoSize, logoSize);
+    brandTextX = marginX + logoSize + 8;
   }catch(e){ /* fall back to text-only header (brandTextX stays at marginX) if the logo fails to decode */ }
 
   // Company name: reserve room for the QUOTATION/number/date block on the right, then
@@ -1730,11 +1716,7 @@ function buildPdf(q, settings){
     headStyles: { fillColor:[31,59,77], textColor:255, fontStyle:'bold' },
     alternateRowStyles: { fillColor:[247,248,247] },
     columnStyles: { 0:{cellWidth:24}, 2:{cellWidth:36,halign:'right'}, 3:{cellWidth:65}, 4:{cellWidth:70,halign:'right'}, 5:{cellWidth:75,halign:'right'} },
-    // autoTable can add its own pages internally when a table overflows (independently of
-    // checkSpace()'s doc.addPage() calls above). willDrawPage fires before that new page's
-    // header/rows are painted, so drawing the watermark here keeps it behind the table on
-    // every page the table spans, not just the page it started on.
-    willDrawPage: () => drawWatermark()
+    didDrawPage: () => {}
   });
   y = doc.lastAutoTable.finalY + 14;
 
@@ -1747,7 +1729,6 @@ function buildPdf(q, settings){
       body: q.expenses.map(e=>[e.category, e.description, String(e.qty), money(e.unitCost), money(expenseAmount(e))]),
       styles: { font:'helvetica', fontSize:8.5, cellPadding:5, textColor:[30,30,30], lineColor:[216,220,224], lineWidth:0.5 },
       headStyles: { fillColor:[91,107,117], textColor:255, fontStyle:'bold' },
-      willDrawPage: () => drawWatermark()
     });
     y = doc.lastAutoTable.finalY + 14;
   }
@@ -2499,14 +2480,9 @@ function Sidebar({ view, setView, onNew, onLogout, user }){
         <div className="px-5 py-6" style={{ display:'flex', alignItems:'center', gap:'12px' }}>
           <img src={VSS_LOGO_DATA_URI} alt="VSS Power logo"
             style={{ width:'36px', height:'36px', minWidth:'36px', objectFit:'contain', flexShrink:0 }} />
-          <div style={{ minWidth: 0 }}>
-            <div className="font-display text-white font-bold text-lg leading-tight tracking-tight whitespace-nowrap">VSS POWER</div>
-            {/* Sidebar is fixed-width (w-60) and shares its row with the 36px logo, leaving
-                only ~150px for this line. At the previous 11px + tracking-wide it measured
-                wider than that, so the browser wrapped it into "ENGINEERING SERVICES" / "LTD."
-                Shrinking the font and dropping the extra letter-spacing keeps it on one line
-                without touching the sidebar width or the logo. */}
-            <div className="text-[3px] font-mono text-white/50 mt-1 tracking-normal whitespace-nowrap">ENGINEERING SERVICES LTD.</div>
+          <div>
+            <div className="font-display text-white font-bold text-lg leading-tight tracking-tight">VSS POWER</div>
+            <div className="text-[11px] font-mono text-white/50 mt-1 tracking-wide">ENGINEERING SERVICES LTD.</div>
           </div>
         </div>
       </div>
